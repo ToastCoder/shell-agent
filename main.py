@@ -1,62 +1,128 @@
 # Required Libs
 import subprocess
+import os
 import re
-import ollama
+from typing import Annotated, TypedDict
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from langchain_ollama import ChatOllama
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
+# Config & State
+BASE_DIR = os.getcwd()
+# Set temperature to 0 for deterministic (predictable) behavior
+model = ChatOllama(model="gemma4", temperature=0).bind(stop=["Observation:"])
 
-# Runs the command in the shell and returns the output
-def run_bash(command: str):
-    """Executes a bash command and returns the output."""
+# State definition
+class AgentState(TypedDict):
+
+    # Keeps track of all thoughts and observations
+    messages: Annotated[list, add_messages]
+
+# Running the shell with sandboxing from outer directories
+def run_shell(command: str):
+    """Executes a shell command within BASE_DIR and returns output."""
+    
+    # Sandbox check: Block directory climbing or absolute paths
+    forbidden = ["..", " /", "~", "$HOME"]
+
+    # Checking if any forbidden string is present in the command
+    if any(p in command for p in forbidden):
+        return "Error: Access denied. You cannot leave the current project directory."
+
     print(f"  [Executing]: {command}")
+
+    # Running the command
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=5, cwd=BASE_DIR
+        )
         return f"Output: {result.stdout}\nError: {result.stderr}"
     except Exception as e:
         return str(e)
 
+# Define the Node
+def agent_node(state: AgentState):
+    """The LLM decides what to do."""
 
-SYSTEM_PROMPT = """
-You are Shell-Agent, a POSIX system expert.
-You have access to a tool called 'run_bash'.
-When you need to find information or take action, follow this format:
+    # Updating the messages with new system prompt if not already added
+    messages = state['messages']
+    
+    # 
+    if not any(isinstance(m, SystemMessage) for m in messages):
+        messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+    
+    response = model.invoke(messages)
+    return {"messages": [response]}
 
-Thought: [Your reasoning about what to do next]
-Action: run_bash("[the command]")
-Observation: [The result of the command - this will be provided to you]
+# Define the tool
+def tool_node(state: AgentState):
+    content = state['messages'][-1].content
 
-Once you have the final answer, respond with:
-Final Answer: [Your summary]
+    # Flexible regex for run_shell("cmd") or run_shell('cmd')
+    match = re.search(r'run_shell\s*\(\s*["\'](.+?)["\']\s*\)', content)
+    
+    if match:
+        result = run_shell(match.group(1))
+        return {"messages": [HumanMessage(content=f"Observation: {result}")]}
+    return {"messages": [HumanMessage(content="Error: Could not parse command.")]}
+    
+    if match:
+        cmd = match.group(1)
+        observation = run_shell(cmd)
+        return {"messages": [HumanMessage(content=f"Observation: {observation}")]}
+    else:
+        # If parsing fails, we MUST tell the agent so it can try again
+        return {"messages": [HumanMessage(content="Error: I couldn't parse your command. Use the format: Action: run_shell(\"command\")")]}
+
+# Determine the next node to execute
+def should_continue(state: AgentState):
+    content = state['messages'][-1].content
+
+    # Only route to tools if 'run_shell' is called AND the agent hasn't hallucinated an observation
+    if "run_shell(" in content and "Observation:" not in content:
+        return "tools"
+    return END
+
+# Building the Graph
+workflow = StateGraph(AgentState)
+
+workflow.add_node("agent", agent_node)
+workflow.add_node("tools", tool_node)
+
+workflow.set_entry_point("agent")
+workflow.add_conditional_edges("agent", should_continue)
+workflow.add_edge("tools", "agent")
+
+app = workflow.compile()
+
+# Main Loop
+SYSTEM_PROMPT = f"""
+You are Shell-Agent. Your BASE_DIR is {BASE_DIR}.
+To run a command, you MUST write: Action: run_shell("command")
+After writing the Action, STOP and wait for the Observation.
 """
 
-def start_agent(user_input):
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_input}
-    ]
+print("Shell-Agent (LangGraph) is active. Press Ctrl+C to exit.")
+print(f"DEBUG: Agent is anchored to: {os.path.abspath(BASE_DIR)}")
 
-    for _ in range(5):  # Limit to 5 steps to prevent infinite loops
-        response = ollama.chat(model='gemma4', messages=messages)
-        content = response['message']['content']
-        print(f"\n{content}")
-
-        if "Final Answer:" in content:
-            break
-
-        # Simple string parsing for the Action
-        if "Action: run_bash(" in content:
-            # Finds the text between the first set of quotes
-            match = re.search(r'run_bash\(["\'](.+?)["\']\)', content)
-            if match:
-                cmd = match.group(1)
-                observation = run_bash(cmd)
-                
-                messages.append({"role": "assistant", "content": content})
-                messages.append({"role": "user", "content": f"Observation: {observation}"})
-            else:
-                print("  [System]: Found Action tag but couldn't parse the command.")
-
-print ("Press Ctrl+C to exit")
+session_history = []
 
 while True:
-    user_input = input("You: ")
-    start_agent(user_input)
+    user_input = input("\nYou: ")
+    if not user_input: continue
+    
+    # 1. Add user input to history
+    session_history.append(HumanMessage(content=user_input))
+    
+    # 2. Pass the FULL history to the graph
+    for output in app.stream({"messages": session_history}):
+        for key, value in output.items():
+            # 3. Get the new message created by the agent or the tool
+            new_msg = value["messages"][-1]
+            
+            if key == "agent":
+                print(new_msg.content)
+            
+            # 4. CRITICAL: Add the agent's thought AND the tool's result to history
+            session_history.append(new_msg)
