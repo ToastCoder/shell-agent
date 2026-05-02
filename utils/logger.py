@@ -16,7 +16,8 @@ logging.basicConfig(
     filename='logs/agent_execution.log',
     filemode='a',
     format='[%(levelname)s] %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    force=True
 )
 
 # Getting the logger instance

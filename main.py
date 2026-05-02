@@ -63,14 +63,17 @@ def tool_node(state: AgentState):
         
         # Checking the permissions
         log.info(f"Pending Execution: {cmd}")
-        approval = input("Allow execution? (y/n): ").strip().lower()
+        
+        approval = input("\nAllow execution? (y/n): ").strip().lower()
         
         if approval == 'y':
             log.info(f"Executing shell command: {cmd}")
+            print("Executing...")
             observation = run_shell(cmd)
             return {"messages": [HumanMessage(content=f"Observation: {observation}")]}
         else:
             log.warning(f"User rejected command: {cmd}")
+            print("Execution denied.")
             return {"messages": [HumanMessage(content="Error: The user denied permission to run this command. Rethink your approach.")]}
             
     return {"messages": [HumanMessage(content="Error: I couldn't parse your command. Use <run_shell> tags.")]}
@@ -100,6 +103,9 @@ app = workflow.compile()
 
 # Logging the start of the agent
 log.info(f"Agent started at {BASE_DIR}, Press Ctrl+C to exit.\n")
+os.system("clear")
+print("Shell-Agent Active\n")
+print(f"Anchored to: {BASE_DIR}\nPress Ctrl+C to exit.\n")
 
 # Session history for maintaining context
 session_history = []
@@ -128,23 +134,41 @@ while True:
                         # Logging the agent's thinking process
                         if thinking:
                             log.info(f"Agent Thinking: {thinking}")
+                            print(f"\nAgent Thinking\n{thinking}")
+                        else:
+                            print("\nAgent Thinking\n(Agent bypassed thinking and went straight to execution)")
+
+                        # Extracting and printing the command for the terminal
+                        match = re.search(r'<run_shell>(.*?)</run_shell>', new_msg.content, flags=re.DOTALL)
+                        if match:
+                            cmd = match.group(1).strip()
+                            print(f"\n[⚠️ Pending Execution]:\n{cmd}")
 
                     # Checking for the final answer
                     elif "Final Answer:" in new_msg.content:
                         answer = new_msg.content.replace("Final Answer:", "").strip()
                         log.info(f"Final Answer: {answer}")
+                        print(f"\n✅ Final Answer\n{answer}")
                     
                     # Logging the agent's response
                     else:
                         log.info(f"Agent: {new_msg.content}")
+                        print(f"\nAgent\n{new_msg.content}")
 
                 # Checking the key
                 elif key == "tools":
                     log.info(f"Shell Output: {new_msg.content}")
+                    
+                    # Truncating shell output for the terminal
+                    obs_text = new_msg.content[:300]
+                    if len(new_msg.content) > 300:
+                        obs_text += "\n... [Truncated for terminal. See logs for full output]"
+                    print(f"\nShell Output\n{obs_text}")
                 
                 # Updating the session history
                 session_history.append(new_msg)
 
     except KeyboardInterrupt:
         log.info("Shutting down Shell-Agent...")
+        print("\n\nShutting down Shell-Agent...")
         break
