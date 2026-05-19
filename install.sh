@@ -7,7 +7,7 @@
 set -e
 
 # Configuration
-REPO_URL="https://github.com/ToastCoder/shell-agent/master"
+REPO_URL="https://github.com/ToastCoder/shell-agent"
 INSTALL_DIR="$HOME/.local/share/shell-agent"
 PYTHON_APP_SCRIPT="main.py"
 RUN_SCRIPT_NAME="shell-agent"
