@@ -63,10 +63,10 @@ SCRIPT_DIR=\$(dirname "\$BASH_SOURCE")
 INSTALL_DIR=\$(dirname "\$SCRIPT_DIR")
 
 # Activate the virtual environment within the installed directory
-source "\${INSTALL_DIR}/.venv/bin/activate" 2>/dev/null
+source "\${INSTALL_DIR}/shell-agent/.venv/bin/activate" 2>/dev/null
 
 # Execute the main application logic located in the installed directory
-python "\${INSTALL_DIR}/main.py"
+python "\${INSTALL_DIR}/shell-agent/main.py"
 deactivate
 EOF
 
