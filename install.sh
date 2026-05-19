@@ -58,15 +58,12 @@ cat > "${RUN_SCRIPT_PATH}" << EOF
 # This script is the main global entry point for Shell-Agent.
 # It ensures the environment is sourced from the local installation path.
 
-# Use the absolute path of the current script directory
-SCRIPT_DIR=\$(dirname "\$BASH_SOURCE")
-INSTALL_DIR=\$(dirname "\$SCRIPT_DIR")
-
-# Activate the virtual environment within the installed directory
-source "\${INSTALL_DIR}/shell-agent/.venv/bin/activate" 2>/dev/null
+python3 -m venv "~/.local/share/shell-agent/.venv"
+source "~/.local/share/shell-agent/.venv/bin/activate"
+pip install -r ~/.local/share/shell-agent/requirements.txt
 
 # Execute the main application logic located in the installed directory
-python "\${INSTALL_DIR}/shell-agent/main.py"
+python3 "~/.local/share/shell-agent/main.py"
 deactivate
 EOF
 
