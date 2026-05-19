@@ -2,71 +2,76 @@
 # main.py
 
 # Importing libraries
-import subprocess
+import json
 import os
 import re
+import subprocess
 from typing import Annotated, TypedDict
-from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
-from langchain_ollama import ChatOllama
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from utils.tools import run_shell, BASE_DIR
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_ollama import ChatOllama
+from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
+
 from utils.logger import log
+from utils.tools import BASE_DIR, run_shell
+
+CONFIG_DIR = "config/"
+
+# Importing the settings from the JSON
+with open(os.path.join(CONFIG_DIR, "settings.json")) as f:
+    SETTINGS = json.load(f)
+    for key in SETTINGS:
+        if isinstance(SETTINGS[key], list):
+            SETTINGS[key] = "\n".join(SETTINGS[key])
 
 # Importing the LLM from Ollama
-model = ChatOllama(model="gemma4", temperature=0).bind(stop=["Observation:"])
+model = ChatOllama(
+    model=SETTINGS["model"]["name"], temperature=SETTINGS["model"]["temperature"]
+).bind(stop=["Observation:"])
+
 
 # State definition
 class AgentState(TypedDict):
-
     # Keeping track of all thoughts and observations
     messages: Annotated[list, add_messages]
 
-SYSTEM_PROMPT = f"""
-You are Shell-Agent. Your BASE_DIR is {BASE_DIR}.
 
-To run a shell command, you MUST use this exact XML format:
-<run_shell>
-your command here
-</run_shell>
+SYSTEM_PROMPT = f"""{SETTINGS["prompt"]}"""
 
-RULES:
-1. After writing the <run_shell> block, STOP and wait for the Observation.
-2. Once you have the information you need, or if you have completed the task, you MUST exit by writing: Final Answer: [your response to the user]
-"""
 
 # Agent Node - calls the LLM and returns the response
 def agent_node(state: AgentState):
 
     # Updating the messages with the system prompt if not already added
-    messages = state['messages']
+    messages = state["messages"]
     if not any(isinstance(m, SystemMessage) for m in messages):
         messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
-    
+
     # Invoking the LLM
     response = model.invoke(messages)
-    
+
     # Returning the response
     return {"messages": [response]}
 
+
 # Tool Node - executes the shell command
 def tool_node(state: AgentState):
-    content = state['messages'][-1].content
+    content = state["messages"][-1].content
 
     # Extracting the command from the XML block
-    match = re.search(r'<run_shell>(.*?)</run_shell>', content, flags=re.DOTALL)
-    
+    match = re.search(r"<run_shell>(.*?)</run_shell>", content, flags=re.DOTALL)
+
     # Checking for the command
     if match:
         cmd = match.group(1).strip()
-        
+
         # Checking the permissions
         log.info(f"Pending Execution: {cmd}")
-        
+
         approval = input("\nAllow execution? (y/n): ").strip().lower()
-        
-        if approval == 'y':
+
+        if approval == "y":
             log.info(f"Executing shell command: {cmd}")
             print("Executing...")
             observation = run_shell(cmd)
@@ -74,13 +79,26 @@ def tool_node(state: AgentState):
         else:
             log.warning(f"User rejected command: {cmd}")
             print("Execution denied.")
-            return {"messages": [HumanMessage(content="Error: The user denied permission to run this command. Rethink your approach.")]}
-            
-    return {"messages": [HumanMessage(content="Error: I couldn't parse your command. Use <run_shell> tags.")]}
+            return {
+                "messages": [
+                    HumanMessage(
+                        content="Error: The user denied permission to run this command. Rethink your approach."
+                    )
+                ]
+            }
+
+    return {
+        "messages": [
+            HumanMessage(
+                content="Error: I couldn't parse your command. Use <run_shell> tags."
+            )
+        ]
+    }
+
 
 # Conditional Edge - decides whether to continue or not
 def should_continue(state: AgentState):
-    content = state['messages'][-1].content
+    content = state["messages"][-1].content
     if "Final Answer:" in content:
         log.info("Final Answer found.")
         return END
@@ -88,6 +106,7 @@ def should_continue(state: AgentState):
         log.info("Found a command to execute.")
         return "tools"
     return END
+
 
 # Building LangGraph workflow
 workflow = StateGraph(AgentState)
@@ -115,17 +134,18 @@ while True:
     # Taking the input from the user
     try:
         user_input = input("\nYou: ")
-        if not user_input: continue
-        
+        if not user_input:
+            continue
+
         # Logging the user input
         log.info(f"User Input: {user_input}")
         session_history.append(HumanMessage(content=user_input))
-        
+
         # Calling the agent
         for output in app.stream({"messages": session_history}):
             for key, value in output.items():
                 new_msg = value["messages"][-1]
-                
+
                 # Checking the key
                 if key == "agent":
                     if "<run_shell>" in new_msg.content:
@@ -136,10 +156,16 @@ while True:
                             log.info(f"Agent Thinking: {thinking}")
                             print(f"\nAgent Thinking\n{thinking}")
                         else:
-                            print("\nAgent Thinking\n(Agent bypassed thinking and went straight to execution)")
+                            print(
+                                "\nAgent Thinking\n(Agent bypassed thinking and went straight to execution)"
+                            )
 
                         # Extracting and printing the command for the terminal
-                        match = re.search(r'<run_shell>(.*?)</run_shell>', new_msg.content, flags=re.DOTALL)
+                        match = re.search(
+                            r"<run_shell>(.*?)</run_shell>",
+                            new_msg.content,
+                            flags=re.DOTALL,
+                        )
                         if match:
                             cmd = match.group(1).strip()
                             print(f"\n[⚠️ Pending Execution]:\n{cmd}")
@@ -149,7 +175,7 @@ while True:
                         answer = new_msg.content.replace("Final Answer:", "").strip()
                         log.info(f"Final Answer: {answer}")
                         print(f"\n✅ Final Answer\n{answer}")
-                    
+
                     # Logging the agent's response
                     else:
                         log.info(f"Agent: {new_msg.content}")
@@ -158,13 +184,15 @@ while True:
                 # Checking the key
                 elif key == "tools":
                     log.info(f"Shell Output: {new_msg.content}")
-                    
+
                     # Truncating shell output for the terminal
                     obs_text = new_msg.content[:300]
                     if len(new_msg.content) > 300:
-                        obs_text += "\n... [Truncated for terminal. See logs for full output]"
+                        obs_text += (
+                            "\n... [Truncated for terminal. See logs for full output]"
+                        )
                     print(f"\nShell Output\n{obs_text}")
-                
+
                 # Updating the session history
                 session_history.append(new_msg)
 
