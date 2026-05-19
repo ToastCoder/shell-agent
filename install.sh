@@ -35,7 +35,7 @@ cd "${TEMP_CLONE_DIR}/shell-agent"
 
 # Clean up existing installation if present
 if [ -d "${INSTALL_DIR}" ]; then
-    echo "🗑️ Found existing installation directory. Backing up and clearing: ${INSTALL_DIR}..."
+    echo "Found existing installation directory. Backing up and clearing: ${INSTALL_DIR}..."
 
     # Backup the old installation first
     mkdir -p "$HOME/.local/share/shell-agent.bak_$(date +%Y%m%d%H%M%d%H%M%S)"
@@ -51,6 +51,36 @@ echo "Copying all core project files to ${INSTALL_DIR}..."
 # Use rsync to copy the entire working project state into the isolated location
 rsync -av --delete "$PWD/" "${INSTALL_DIR}/"
 
+# 4. Virtual Environment Setup and Dependency Installation
+echo "------------------------------------------------------------------------"
+echo "Initializing Virtual Environment and Installing Dependencies..."
+echo "------------------------------------------------------------------------"
+
+# Create the virtual environment inside the installed directory
+echo "Step 4a: Creating virtual environment in ${INSTALL_DIR}/.venv..."
+python3 -m venv "${INSTALL_DIR}/.venv"
+
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to create virtual environment. Check python3 availability."
+    exit 1
+fi
+
+# Activate the environment (must be done before pip can work correctly)
+echo "Step 4b: Activating environment and installing dependencies..."
+source "${INSTALL_DIR}/.venv/bin/activate"
+
+# Install dependencies using the local requirements.txt
+pip install -r requirements.txt
+
+if [ $? -ne 0 ]; then
+    echo "Error: Dependency installation failed. Check requirements.txt and network connectivity."
+    deactivate
+    exit 1
+fi
+
+# Deactivate the environment after successful installation
+deactivate
+
 # Create and Configure run.sh Wrapper Script (The new global entry point)
 echo "Creating wrapper script: ${RUN_SCRIPT_NAME}..."
 cat > "${RUN_SCRIPT_PATH}" << EOF
@@ -58,13 +88,15 @@ cat > "${RUN_SCRIPT_PATH}" << EOF
 # This script is the main global entry point for Shell-Agent.
 # It ensures the environment is sourced from the local installation path.
 
-python3 -m venv "~/.local/share/shell-agent/.venv"
-source "~/.local/share/shell-agent/.venv/bin/activate"
-pip install -r ~/.local/share/shell-agent/requirements.txt
+# Determine the absolute path of the directory containing this script.
+SCRIPT_DIR=\$(dirname "\$BASH_SOURCE")
+INSTALL_DIR=\$(dirname "\$SCRIPT_DIR")
 
-# Execute the main application logic located in the installed directory
-python3 "$HOME/.local/share/shell-agent/main.py"
-deactivate
+# Activate the virtual environment using the full path to ensure sourcing works.
+source "\${INSTALL_DIR}/.venv/bin/activate" 2>/dev/null
+
+# Execute the main application logic.
+python "\${INSTALL_DIR}/shell-agent/main.py"
 EOF
 
 # Make the entry point executable
