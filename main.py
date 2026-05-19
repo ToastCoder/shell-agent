@@ -5,7 +5,6 @@
 import json
 import os
 import re
-import subprocess
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -133,7 +132,7 @@ session_history = []
 while True:
     # Taking the input from the user
     try:
-        user_input = input("\nYou: ")
+        user_input = input("\n[YOU]$>> ")
         if not user_input:
             continue
 
@@ -146,21 +145,21 @@ while True:
             for key, value in output.items():
                 new_msg = value["messages"][-1]
 
-                # Checking the key
+                # --- Agent Thinking and Response
                 if key == "agent":
                     if "<run_shell>" in new_msg.content:
                         thinking = new_msg.content.split("<run_shell>")[0].strip()
 
-                        # Logging the agent's thinking process
+                        # Print Thinking Process
                         if thinking:
-                            log.info(f"Agent Thinking: {thinking}")
-                            print(f"\nAgent Thinking\n{thinking}")
+                            print("\nAgent Thinking...")
+                            print("-" * 20)
+                            print(thinking)
                         else:
-                            print(
-                                "\nAgent Thinking\n(Agent bypassed thinking and went straight to execution)"
-                            )
+                            print("\nAgent Thinking...")
+                            print("--- (Agent is ready for action) ---")
 
-                        # Extracting and printing the command for the terminal
+                        # Extract and print the pending command
                         match = re.search(
                             r"<run_shell>(.*?)</run_shell>",
                             new_msg.content,
@@ -168,30 +167,43 @@ while True:
                         )
                         if match:
                             cmd = match.group(1).strip()
-                            print(f"\n[⚠️ Pending Execution]:\n{cmd}")
+                            print("\nACTION REQUIRED")
+                            print("The agent proposes executing the following command:")
+                            print(f"> {cmd}")
 
-                    # Checking for the final answer
+                    # Final Answer
                     elif "Final Answer:" in new_msg.content:
                         answer = new_msg.content.replace("Final Answer:", "").strip()
                         log.info(f"Final Answer: {answer}")
-                        print(f"\n✅ Final Answer\n{answer}")
+                        print("\n\nTask Complete.")
+                        print("=" * 40)
+                        print(f"{answer}")
+                        print("=" * 40)
 
-                    # Logging the agent's response
+                    # Standard Agent Response
                     else:
-                        log.info(f"Agent: {new_msg.content}")
+                        log.info(f"Agent Response: {new_msg.content}")
                         print(f"\nAgent\n{new_msg.content}")
 
-                # Checking the key
+                # Tool Execution / Observation
                 elif key == "tools":
-                    log.info(f"Shell Output: {new_msg.content}")
+                    log.info(f"Observation Source: {new_msg.content}")
+
+                    observation = new_msg.content.replace("Observation: ", "").strip()
+
+                    print("\n\nSHELL OBSERVATION ")
+                    print("-" * 30)
 
                     # Truncating shell output for the terminal
-                    obs_text = new_msg.content[:300]
-                    if len(new_msg.content) > 300:
-                        obs_text += (
-                            "\n... [Truncated for terminal. See logs for full output]"
+                    obs_text = observation
+                    if len(observation) > 500:
+                        obs_text = (
+                            observation[:497]
+                            + "\n... [TRUNCATED: See logs for full output]"
                         )
-                    print(f"\nShell Output\n{obs_text}")
+
+                    print(obs_text)
+                    print("-" * 30)
 
                 # Updating the session history
                 session_history.append(new_msg)
