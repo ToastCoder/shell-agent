@@ -63,7 +63,7 @@ source "~/.local/share/shell-agent/.venv/bin/activate"
 pip install -r ~/.local/share/shell-agent/requirements.txt
 
 # Execute the main application logic located in the installed directory
-python3 "~/.local/share/shell-agent/main.py"
+python3 "$HOME/.local/share/shell-agent/main.py"
 deactivate
 EOF
 
