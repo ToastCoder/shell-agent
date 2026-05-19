@@ -5,6 +5,7 @@
 import json
 import os
 import re
+import subprocess
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -13,16 +14,22 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from utils.logger import log
-from utils.tools import BASE_DIR, run_shell
+from utils.tools import run_shell
 
-CONFIG_DIR = "config/"
+# Determine the absolute path of the directory where this main.py script resides
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE_PATH = os.path.join(SCRIPT_DIR, "config", "settings.json")
 
-# Importing the settings from the JSON
-with open(os.path.join(CONFIG_DIR, "settings.json")) as f:
-    SETTINGS = json.load(f)
-    for key in SETTINGS:
-        if isinstance(SETTINGS[key], list):
-            SETTINGS[key] = "\n".join(SETTINGS[key])
+# Importing the settings from the JSON using the absolute path
+try:
+    with open(CONFIG_FILE_PATH) as f:
+        SETTINGS = json.load(f)
+        for key in SETTINGS:
+            if isinstance(SETTINGS[key], list):
+                SETTINGS[key] = "\n".join(SETTINGS[key])
+except FileNotFoundError:
+    print("CRITICAL ERROR: Configuration file not found. Run the installer again.")
+    exit(1)
 
 # Importing the LLM from Ollama
 model = ChatOllama(
@@ -57,6 +64,7 @@ def agent_node(state: AgentState):
 # Tool Node - executes the shell command
 def tool_node(state: AgentState):
     content = state["messages"][-1].content
+    current_working_directory = os.getcwd()
 
     # Extracting the command from the XML block
     match = re.search(r"<run_shell>(.*?)</run_shell>", content, flags=re.DOTALL)
@@ -66,14 +74,14 @@ def tool_node(state: AgentState):
         cmd = match.group(1).strip()
 
         # Checking the permissions
-        log.info(f"Pending Execution: {cmd}")
+        log.info(f"Pending Execution: {cmd} in {current_working_directory}")
 
         approval = input("\nAllow execution? (y/n): ").strip().lower()
 
         if approval == "y":
             log.info(f"Executing shell command: {cmd}")
             print("Executing...")
-            observation = run_shell(cmd)
+            observation = run_shell(cmd, cwd=current_working_directory)
             return {"messages": [HumanMessage(content=f"Observation: {observation}")]}
         else:
             log.warning(f"User rejected command: {cmd}")
@@ -120,10 +128,10 @@ workflow.add_edge("tools", "agent")
 app = workflow.compile()
 
 # Logging the start of the agent
-log.info(f"Agent started at {BASE_DIR}, Press Ctrl+C to exit.\n")
+log.info(f"Agent started at {os.getcwd()}, Press Ctrl+C to exit.\n")
 os.system("clear")
 print("Shell-Agent Active\n")
-print(f"Anchored to: {BASE_DIR}\nPress Ctrl+C to exit.\n")
+print(f"Anchored to: {os.getcwd()}\nPress Ctrl+C to exit.\n")
 
 # Session history for maintaining context
 session_history = []
