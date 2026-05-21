@@ -2,6 +2,7 @@
 
 Shell-Agent is a sophisticated, autonomous AI assistant that lives directly in your terminal. Built with **Python, LangGraph, and Ollama**, it moves beyond standard chat UIs by actively executing bash commands to build, modify, and debug files on your local machine.
 
+##### Demo Video: https://youtu.be/3b2UN3Tu8wI?si=YvHBuRwNhDOgq0Vr
 ---
 
 ## Key Features
