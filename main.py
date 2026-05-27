@@ -6,9 +6,11 @@ import json
 import os
 import re
 import subprocess
+import sys
+import time
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
@@ -46,19 +48,46 @@ class AgentState(TypedDict):
 SYSTEM_PROMPT = f"""{SETTINGS["prompt"]}"""
 
 
+def stream_print(data, delay=0.002, end="\n"):
+    if not isinstance(data, str):
+        full_content = ""
+        for chunk in data:
+            token = chunk.content if hasattr(chunk, "content") else str(chunk)
+            full_content += token
+            sys.stdout.write(token)
+            sys.stdout.flush()
+        if end:
+            sys.stdout.write(end)
+            sys.stdout.flush()
+        return full_content
+    else:
+        for char in data:
+            sys.stdout.write(char)
+            sys.stdout.flush()
+            time.sleep(delay)
+        if end:
+            sys.stdout.write(end)
+            sys.stdout.flush()
+        return data
+
+
 # Agent Node - calls the LLM and returns the response
 def agent_node(state: AgentState):
-
-    # Updating the messages with the system prompt if not already added
     messages = state["messages"]
     if not any(isinstance(m, SystemMessage) for m in messages):
         messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
 
-    # Invoking the LLM
-    response = model.invoke(messages)
+    stream_print("\n\033[1;92magent\033[0m ❯ ", end="")
+    response_text = stream_print(model.stream(messages))
 
-    # Returning the response
-    return {"messages": [response]}
+    match = re.search(r"<run_shell>(.*?)</run_shell>", response_text, flags=re.DOTALL)
+    if match:
+        cmd = match.group(1).strip()
+        stream_print("\033[91m[ACTION REQUIRED]\033[0m")
+        stream_print("\033[1mThe agent proposes executing the following command:\033[0m")
+        stream_print(f"\033[1m> {cmd}\033[0m")
+
+    return {"messages": [AIMessage(content=response_text)]}
 
 
 # Tool Node - executes the shell command
@@ -80,12 +109,12 @@ def tool_node(state: AgentState):
 
         if approval == "y":
             log.info(f"Executing shell command: {cmd}")
-            print("Executing...")
+            stream_print("\033[93mExecuting...\033[0m")
             observation = run_shell(cmd, cwd=current_working_directory)
             return {"messages": [HumanMessage(content=f"Observation: {observation}")]}
         else:
             log.warning(f"User rejected command: {cmd}")
-            print("Execution denied.")
+            stream_print("\033[91mExecution denied.\033[0m")
             return {
                 "messages": [
                     HumanMessage(
@@ -140,7 +169,8 @@ session_history = []
 while True:
     # Taking the input from the user
     try:
-        user_input = input("\n[YOU]$>> ")
+        print(f"\n\033[96m{os.getcwd()}\033[0m")
+        user_input = input("\033[1;94myou\033[0m ❯ ")
         if not user_input:
             continue
 
@@ -153,45 +183,13 @@ while True:
             for key, value in output.items():
                 new_msg = value["messages"][-1]
 
-                # --- Agent Thinking and Response
+                # Agent Thinking and Response
                 if key == "agent":
-                    if "<run_shell>" in new_msg.content:
-                        thinking = new_msg.content.split("<run_shell>")[0].strip()
-
-                        # Print Thinking Process
-                        if thinking:
-                            print("\nAgent Thinking...")
-                            print("-" * 20)
-                            print(thinking)
-                        else:
-                            print("\nAgent Thinking...")
-                            print("--- (Agent is ready for action) ---")
-
-                        # Extract and print the pending command
-                        match = re.search(
-                            r"<run_shell>(.*?)</run_shell>",
-                            new_msg.content,
-                            flags=re.DOTALL,
-                        )
-                        if match:
-                            cmd = match.group(1).strip()
-                            print("\nACTION REQUIRED")
-                            print("The agent proposes executing the following command:")
-                            print(f"> {cmd}")
-
-                    # Final Answer
-                    elif "Final Answer:" in new_msg.content:
+                    if "Final Answer:" in new_msg.content:
                         answer = new_msg.content.replace("Final Answer:", "").strip()
                         log.info(f"Final Answer: {answer}")
-                        print("\n\nTask Complete.")
-                        print("=" * 40)
-                        print(f"{answer}")
-                        print("=" * 40)
-
-                    # Standard Agent Response
                     else:
                         log.info(f"Agent Response: {new_msg.content}")
-                        print(f"\nAgent\n{new_msg.content}")
 
                 # Tool Execution / Observation
                 elif key == "tools":
@@ -199,8 +197,7 @@ while True:
 
                     observation = new_msg.content.replace("Observation: ", "").strip()
 
-                    print("\n\nSHELL OBSERVATION ")
-                    print("-" * 30)
+                    stream_print("\n\033[93m[SHELL OBSERVATION]\033[0m")
 
                     # Truncating shell output for the terminal
                     obs_text = observation
@@ -210,8 +207,7 @@ while True:
                             + "\n... [TRUNCATED: See logs for full output]"
                         )
 
-                    print(obs_text)
-                    print("-" * 30)
+                    stream_print(obs_text)
 
                 # Updating the session history
                 session_history.append(new_msg)

@@ -37,8 +37,9 @@ def run_shell(command: str, cwd: str = None):
         )
         if result.stderr:
             log.error(f"Execution Error: {result.stderr}")
-
-        full_output = f"Output: {result.stdout}\nError: {result.stderr}"
+            full_output = f"Output: {result.stdout}\nError: {result.stderr}"
+        else:
+            full_output = f"Output: {result.stdout}"
         log.info(f"Command Result: {full_output}")
         return full_output
 
